@@ -56,6 +56,15 @@ int trie_insert(TrieNode *parent, const char *key, void *value);
  */
 void *trie_search(TrieNode *parent, const char *key);
 
+/**
+ * iterate_true()
+ * 
+ * Iterates all the trie, executing the function CB (callback) for every item in the tree
+ * with a defined value. The userdata is passed alongside the node value to the callback 
+ * function.
+ *
+ * The function doesn't return any value.
+ */
 void iterate_trie(TrieNode *node, void (*cb)(void *, void *userdata), void *userdata);
 
 #endif
