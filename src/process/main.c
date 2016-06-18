@@ -106,6 +106,8 @@ static int dummy_check_issued_cb(X509_STORE_CTX * ctx, X509 * x, X509 * issuer) 
 
 magic_t magic_cookie;
 
+StrMap* auth_sessions = NULL;
+
 int main(int argc, char **argv) {
 
   init_config(argc, argv);
@@ -137,8 +139,11 @@ int main(int argc, char **argv) {
 
   // TODO: add error cb to base
 
+  /** SETUP AUTH TOKENS HASH TABLE **/
 
-  /** SETUP LISTENER **/
+  auth_sessions = sm_new(1024); // FIXME: this a hardcoded value.
+
+  /** SETUP MAIN LISTENER **/
 
   struct sockaddr_in sin;
   memset(&sin, 0, sizeof(struct sockaddr_in));
@@ -193,6 +198,56 @@ int main(int argc, char **argv) {
   evhtp_set_hook(&storage_cb->hooks, evhtp_hook_on_request_fini, finish_request, NULL);
 
   if(evhtp_bind_sockaddr(server, (struct sockaddr*)&sin, sizeof(sin), 1024) != 0) {
+    log_error("evhtp_bind_sockaddr() failed: %s", strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  /** SETUP AUTH LISTENER **/
+
+  memset(&sin, 0, sizeof(struct sockaddr_in));
+  sin.sin_family = AF_INET;
+  sin.sin_addr.s_addr = htonl(0);
+  sin.sin_port = htons(RS_AUTH_PORT);
+
+  evhtp_t *server_auth = evhtp_new(rs_event_base, NULL);
+
+  if(RS_USE_SSL) {
+    evhtp_ssl_cfg_t ssl_config = {
+      .pemfile = RS_SSL_CERT_PATH,
+      .privfile = RS_SSL_KEY_PATH,
+      .cafile = RS_SSL_CA_PATH,
+      // what's this???
+      .capath = NULL,
+      .ciphers = "RC4+RSA:HIGH:+MEDIUM:+LOW",
+      .ssl_opts = SSL_OP_NO_SSLv2,
+      .ssl_ctx_timeout = 60*60*48,
+      .verify_peer = SSL_VERIFY_PEER,
+      .verify_depth = 42,
+      .x509_verify_cb = dummy_ssl_verify_callback,
+      .x509_chk_issued_cb = dummy_check_issued_cb,
+      .scache_type = evhtp_ssl_scache_type_internal,
+      .scache_size = 1024,
+      .scache_timeout = 1024,
+      .scache_init = NULL,
+      .scache_add = NULL,
+      .scache_get = NULL,
+      .scache_del = NULL
+    };
+
+    if(evhtp_ssl_init(server_auth, &ssl_config) != 0) {
+      log_error("evhtp_ssl_init() failed");
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  /* AUTH */
+
+  evhtp_set_cb(server_auth, "/authenticate", handle_authenticate, NULL);
+  evhtp_set_cb(server_auth, "/authorizations", handle_authorizations, NULL);
+
+  evhtp_set_hook(&storage_cb->hooks, evhtp_hook_on_request_fini, finish_request, NULL);
+
+  if(evhtp_bind_sockaddr(server_auth, (struct sockaddr*)&sin, sizeof(sin), 1024) != 0) {
     log_error("evhtp_bind_sockaddr() failed: %s", strerror(errno));
     exit(EXIT_FAILURE);
   }

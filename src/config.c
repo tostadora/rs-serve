@@ -26,18 +26,18 @@ static void print_help(const char *progname) {
           "                                  process and exit. If you don't use this in\n"
           "                                  combination with the --log-file option, all\n"
           "                                  future output will be lost.\n"
+          "  --auth-port <port>            - Bind the auth server to given port (default: 8888).\n"
           "  --dir=<directory-name>        - Name of the directory relative to the user's\n"
           "                                  home directory to serve data from.\n"
           "                                  Defaults to: storage\n"
-          "  --pid-file=<file>             - Write PID to given file.\n"
           "  --stop                        - Stop a running rs-serve process. The process\n"
           "                                  is identified by the PID file specified via\n"
           "                                  the --pid-file option. NOTE: the --stop option\n"
           "                                  MUST precede the --pid-file option on the\n"
           "                                  command line for this to work.\n"
+          "  --pid-file=<file>             - Write PID to given file.\n"
           " --debug                        - Enable debug output.\n"
           " --auth-uri=<uri-template>      - URI of the OAuth2 endpoint. Required for webfinger.\n"
-          " --experimental                 - Enable experimental features\n"
           " --ssl                          - Enable SSL.\n"
           " --cert-path=<path>             - Set path to SSL certificate file.\n"
           " --key-path=<path>              - Set path to SSL key file.\n"
@@ -61,6 +61,7 @@ static void print_version() {
 }
 
 int rs_port = 80;
+int rs_auth_port = 8888;
 char *rs_scheme = "http";
 char *rs_hostname = "local.dev";
 int rs_detach = 0;
@@ -73,7 +74,6 @@ int rs_stop_other = 0;
 char *rs_auth_uri = NULL;
 int rs_auth_uri_len = 0;
 int rs_webfinger_enabled = 1;
-int rs_experimental = 0;
 int rs_use_ssl = 0;
 char *rs_ssl_cert_path = NULL;
 char *rs_ssl_key_path = NULL;
@@ -86,6 +86,7 @@ static struct option long_options[] = {
   { "port", required_argument, 0, 'p' },
   { "hostname", required_argument, 0, 'n' },
   { "dir", required_argument, 0, 0 },
+  { "auth-port", no_argument, 0, 0 },
   { "pid-file", required_argument, 0, 0 },
   { "stop", no_argument, 0, 0 },
   { "log-file", required_argument, 0, 'f' },
@@ -94,7 +95,6 @@ static struct option long_options[] = {
   { "help", no_argument, 0, 'h' },
   { "version", no_argument, 0, 'v' },
   { "auth-uri", required_argument, 0, 0 },
-  { "experimental", no_argument, 0, 0 },
   { "ssl", no_argument, 0, 0 },
   { "cert-path", required_argument, 0, 0 },
   { "key-path", required_argument, 0, 0 },
@@ -174,6 +174,8 @@ void init_config(int argc, char **argv) {
         rs_stop_other = 1;
       } else if(strcmp(arg_name, "debug") == 0) { // --debug
         current_log_debug = do_log_debug;
+      } else if(strcmp(arg_name, "auth-port") == 0) { // --auth-port
+        rs_auth_port = atoi(optarg);
       } else if(strcmp(arg_name, "dir") == 0) { // --dir=<dirname>
         rs_home_serve_root = optarg;
         int len = strlen(rs_home_serve_root);
@@ -185,8 +187,6 @@ void init_config(int argc, char **argv) {
       } else if(strcmp(arg_name, "auth-uri") == 0) { // --auth-uri=<uri-template>
         rs_auth_uri = optarg;
         rs_auth_uri_len = strlen(rs_auth_uri);
-      } else if(strcmp(arg_name, "experimental") == 0) { // --experimental
-        rs_experimental = 1;
       } else if(strcmp(arg_name, "ssl") == 0) { // --ssl
         rs_use_ssl = 1;
         rs_scheme = "https";
@@ -231,12 +231,6 @@ void init_config(int argc, char **argv) {
     }
   }
 
-  if(rs_experimental) {
-    log_info("Experimental features enabled");
-  } else {
-    log_info("Running in strict mode");
-  }
-
   if(rs_auth_uri == NULL) {
     log_warn("No --auth-uri set, won't be able to do webfinger!");
     rs_webfinger_enabled = 0;
@@ -245,5 +239,5 @@ void init_config(int argc, char **argv) {
 }
 
 void cleanup_config() {
-  // remove this?
+  // XXX: remove this?
 }

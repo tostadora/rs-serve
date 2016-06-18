@@ -96,7 +96,7 @@
       object._addEvent(eventName);
     });
   };
-})(this);
+}(this));
 
 function parseJsonCb(nextCallback) {
   return function(err, xhr) {

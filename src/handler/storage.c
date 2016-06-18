@@ -31,11 +31,8 @@ static evhtp_res serve_file(evhtp_request_t *request, const char *disk_path,
 static evhtp_res handle_get_or_head(evhtp_request_t *request, int include_body);
 
 evhtp_res storage_handle_head(evhtp_request_t *request) {
-  if(RS_EXPERIMENTAL) {
-    return handle_get_or_head(request, 0);
-  } else {
-    return EVHTP_RES_METHNALLOWED;
-  }
+  log_debug("storage_handle_head()");
+  return handle_get_or_head(request, 0);
 }
 
 evhtp_res storage_handle_get(evhtp_request_t *request) {
@@ -114,7 +111,7 @@ evhtp_res storage_handle_put(evhtp_request_t *request) {
       return EVHTP_RES_SERVERR;
     }
     char *dir_path = dirname(path_copy);
-    if(strcmp(dir_path, ".") == 0) { // PUT to file below root directory
+    if(!strcmp(dir_path, ".")) { // PUT to file below root directory
       continue;
     }
     char *saveptr = NULL;
@@ -142,7 +139,7 @@ evhtp_res storage_handle_put(evhtp_request_t *request) {
           free(storage_root);
           return 400;
         } else {
-          // directory exists
+          // directory exists. Nothing to do here
         }
       } else {
         if(mkdirat(dirfd, dir_name, S_IRWXU | S_IRWXG) != 0) {
@@ -187,7 +184,7 @@ evhtp_res storage_handle_put(evhtp_request_t *request) {
     return EVHTP_RES_SERVERR;
   }
 
-  if(! exists) {
+  if(!exists) {
     if(fchown(fd, uid, gid) != 0) {
       log_warn("Failed to chown() newly created file: %s", strerror(errno));
     }
@@ -200,10 +197,16 @@ evhtp_res storage_handle_put(evhtp_request_t *request) {
   char *content_type = "application/octet-stream; charset=binary";
   evhtp_kv_t *content_type_header = evhtp_headers_find_header(request->headers_in, "Content-Type");
 
+  /* TODO: If not exactly one Content-Type header was received as part of a
+    PUT request, the Content-Type header value contains non-ASCII
+    characters, or it is unreasonably long, the server MAY refuse to
+    process the request, and instead respond with a descriptive error
+    message in the body, and a http response code from the 4xx range.*/
+
   if(content_type_header != NULL) {
     content_type = content_type_header->val;
   }
-  
+
   // remember content type in extended attributes
   if(content_type_to_xattr(disk_path, content_type) != 0) {
     log_error("Setting xattr for content type failed. Ignoring.");
@@ -254,6 +257,10 @@ evhtp_res storage_handle_delete(evhtp_request_t *request) {
 
     char *etag_string = get_etag(disk_path);
 
+    // PUT and DELETE requests MAY have an 'If-Match' request header [HTTP], and
+    // MUST fail with a 412 response code if that doesn't match the document's
+    // current version.
+
     evhtp_header_t *if_match = evhtp_headers_find_header(request->headers_in, "If-Match");
     if(if_match && (strcmp(etag_string, if_match->val) != 0)) {
       return 412;
@@ -266,8 +273,8 @@ evhtp_res storage_handle_delete(evhtp_request_t *request) {
       log_error("unlink() failed: %s", strerror(errno));
       return EVHTP_RES_SERVERR;
     }
-    
-    /* 
+
+    /*
      * remove empty parents
      */
     char *path_copy = strdup(REQUEST_GET_PATH(request));
@@ -347,6 +354,13 @@ static evhtp_res serve_directory(evhtp_request_t *request, char *disk_path, stru
 
   json_start_object(json);
 
+  // write mandatory context
+  json_write_key_val(json, "@context", "http://remotestorage.io/spec/folder-description");
+
+  // start the items object that contains every member of the folder
+  json_write_key(json, "items");
+  json_start_object(json);
+
   for(;;) {
     readdir_r(dir, entryp, &resultp);
     if(resultp == NULL) {
@@ -357,21 +371,42 @@ static evhtp_res serve_directory(evhtp_request_t *request, char *disk_path, stru
       // skip.
       continue;
     }
+
     entry_len = strlen(entryp->d_name);
     char full_path[disk_path_len + entry_len + 1];
     sprintf(full_path, "%s%s", disk_path, entryp->d_name);
     stat(full_path, &file_stat_buf);
 
-    char key_string[entry_len + 2];
-    sprintf(key_string, "%s%s", entryp->d_name,
+    char object_name[entry_len + 2];
+    sprintf(object_name, "%s%s", entryp->d_name,
             S_ISDIR(file_stat_buf.st_mode) ? "/": "");
-    char *val_string = get_etag(full_path);
+    char *etag = get_etag(full_path);
 
-    json_write_key_val(json, key_string, val_string);
+    // write the item object
+    json_write_key(json, object_name);
+    json_start_object(json);
 
-    free(val_string);
+    json_write_key_val(json, "ETag", etag);
+    free(etag);
+    if (S_ISREG(file_stat_buf.st_mode)) {
+      int free_mime_type = 0;
+      char *mime_type;
+      detect_mime(full_path, mime_type, &free_mime_type);
+      json_write_key_val(json, "Content-Type", mime_type);
+    
+      char *length_string = malloc(24);
+      if(length_string == NULL) {
+        log_error("malloc() failed: %s", strerror(errno));
+        return EVHTP_RES_SERVERR;
+      }
+      snprintf(length_string, 24, "%ld", file_stat_buf.st_size);
+      json_write_key_val(json, "Content-Length", length_string);
+    }
+    json_end_object(json);
   }
 
+  // ends the items object and the global object of the JSON description
+  json_end_object(json);
   json_end_object(json);
 
   free_json(json);
@@ -384,8 +419,9 @@ static evhtp_res serve_directory(evhtp_request_t *request, char *disk_path, stru
     return EVHTP_RES_SERVERR;
   }
 
-  ADD_RESP_HEADER(request, "Content-Type", "application/json; charset=UTF-8");
+  ADD_RESP_HEADER(request, "Content-Type", "application/ld+json; charset=UTF-8");
   ADD_RESP_HEADER_CP(request, "ETag", etag);
+  ADD_RESP_HEADER(request, "Cache-Control", "no-cache");
 
   free(etag);
   free(entryp);
@@ -416,7 +452,7 @@ static evhtp_res serve_file_head(evhtp_request_t *request, char *disk_path, stru
     }
     log_debug("HEAD file found");
   }
-    
+
   char *etag_string = get_etag(disk_path);
   if(etag_string == NULL) {
     log_error("get_etag() failed");
@@ -443,27 +479,15 @@ static evhtp_res serve_file_head(evhtp_request_t *request, char *disk_path, stru
   int free_mime_type = 0;
   // mime type is either passed in ... (such as for directory listings)
   if(mime_type == NULL) {
-    // ... or detected based on xattr
-    mime_type = content_type_from_xattr(disk_path);
-    if(mime_type == NULL) {
-      // ... or guessed by libmagic
-      log_debug("mime type not given, detecting...");
-      mime_type = magic_file(magic_cookie, disk_path);
-      if(mime_type == NULL) {
-        // ... or defaulted to "application/octet-stream"
-        log_error("magic failed: %s", magic_error(magic_cookie));
-        mime_type = "application/octet-stream; charset=binary";
-      }
-    } else {
-      // xattr detected mime type and allocated memory for it
-      free_mime_type = 1;
-    }
+    // ... or searched
+    detect_mime(disk_path, mime_type, &free_mime_type);
   }
 
   log_info("setting Content-Type of %s: %s", request->uri->path->full, mime_type);
   ADD_RESP_HEADER_CP(request, "Content-Type", mime_type);
   ADD_RESP_HEADER_CP(request, "Content-Length", length_string);
   ADD_RESP_HEADER_CP(request, "ETag", etag_string);
+  ADD_RESP_HEADER(request, "Cache-Control", "no-cache");
 
   free(etag_string);
   free(length_string);
@@ -528,6 +552,11 @@ static char *make_disk_path(char *user, char *path, char **storage_root) {
 }
 
 static evhtp_res handle_get_or_head(evhtp_request_t *request, int include_body) {
+
+
+    // A GET request MAY have a comma separated list of revisions in a
+    // 'If-None-Match:*' header [HTTP], in which case it SHOULD fail with a 304
+    // response code if the version already exists. THIS IS A TODO
 
   log_debug("HANDLE GET / HEAD (body: %s)", include_body ? "true" : "false");
 

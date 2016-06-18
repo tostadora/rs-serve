@@ -18,4 +18,6 @@ evhtp_res storage_handle_get(evhtp_request_t *request);
 evhtp_res storage_handle_put(evhtp_request_t *request);
 evhtp_res storage_handle_delete(evhtp_request_t *request);
 
+size_t json_buf_writer(char *buf, size_t count, void *arg);
+
 #endif /* !RS_HANDLER_STORAGE_H */

@@ -206,3 +206,22 @@ char *get_etag(const char *disk_path) {
   }
   return etag;
 }
+
+void detect_mime (char *disk_path, char *mime_type, int *free_mime_type) {
+	// mime is detected based on xattr
+	mime_type = content_type_from_xattr(disk_path);
+    if(mime_type == NULL) {
+	  *free_mime_type = 0; // there'll be no need to free memory as we didn't allocated it with xattr
+      // ... or guessed by libmagic
+      log_debug("mime type not given, detecting...");
+      mime_type = magic_file(magic_cookie, disk_path);
+      if(mime_type == NULL) {
+        // ... or defaulted to "application/octet-stream"
+        log_error("magic failed: %s", magic_error(magic_cookie));
+        mime_type = "application/octet-stream; charset=binary";
+      }
+    } else {
+      // xattr detected mime type and allocated memory for it
+      *free_mime_type = 1;
+    }
+}

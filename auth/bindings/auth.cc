@@ -10,7 +10,7 @@
 
 #define EXPECT_ARGS(n)                          \
   if(args.Length() < n) {                                               \
-    ThrowException(Exception::TypeError(String::New("Wrong number of arguments"))); \
+    ThrowException(Exception::TypeError(String::NewFromUtf8("Wrong number of arguments"))); \
     return scope.Close(Undefined());                                    \
   }
 
@@ -35,7 +35,7 @@ Handle<Value> Add(const Arguments& args) {
   auth.scopes.count = n;
   auth.scopes.ptr = (struct rs_scope**) malloc(sizeof(struct rs_scope*) * n);
   if(auth.scopes.ptr == NULL) {
-    ThrowException(Exception::Error(String::New("Failed to allocate memory")));
+    ThrowException(Exception::Error(String::NewFromUtf8("Failed to allocate memory")));
     return scope.Close(Undefined());
   }
 
@@ -45,7 +45,7 @@ Handle<Value> Add(const Arguments& args) {
     String::AsciiValue mode(scopes->Get(_key));
     struct rs_scope *auth_scope = (struct rs_scope*)malloc(sizeof(struct rs_scope));
     if(auth_scope == NULL) {
-      ThrowException(Exception::Error(String::New("Failed to allocate memory")));
+      ThrowException(Exception::Error(String::NewFromUtf8("Failed to allocate memory")));
       return scope.Close(Undefined());
     }
     if(strcmp(*key, "root") == 0) {
@@ -86,15 +86,15 @@ Handle<Value> Remove(const Arguments& args) {
 
 inline Handle<Value> auth_to_object(struct rs_authorization *auth) {
   Local<Object> obj = Object::New();
-  obj->Set(String::NewSymbol("username"), String::New(auth->username));
-  obj->Set(String::NewSymbol("token"), String::New(auth->token));
+  obj->Set(String::NewFromUtf8("username"), String::NewFromUtf8(auth->username));
+  obj->Set(String::NewFromUtf8("token"), String::NewFromUtf8(auth->token));
   int n = auth->scopes.count, i;
   Local<Object> scopes = Object::New();
   for(i=0;i<n;i++) {
-    scopes->Set(String::NewSymbol(auth->scopes.ptr[i]->name),
-                String::NewSymbol(auth->scopes.ptr[i]->write ? "rw" : "r"));
+    scopes->Set(String::NewFromUtf8(auth->scopes.ptr[i]->name),
+                String::NewFromUtf8(auth->scopes.ptr[i]->write ? "rw" : "r"));
   }
-  obj->Set(String::NewSymbol("scopes"), scopes);
+  obj->Set(String::NewFromUtf8("scopes"), scopes);
   return obj;
 }
 
@@ -133,10 +133,10 @@ Handle<Value> List(const Arguments& args) {
 }
 
 void init(Handle<Object> exports) {
-  exports->Set(String::NewSymbol("add"), FunctionTemplate::New(Add)->GetFunction());
-  exports->Set(String::NewSymbol("remove"), FunctionTemplate::New(Remove)->GetFunction());
-  exports->Set(String::NewSymbol("lookup"), FunctionTemplate::New(Lookup)->GetFunction());
-  exports->Set(String::NewSymbol("list"), FunctionTemplate::New(List)->GetFunction());
+  exports->Set(String::NewFromUtf8("add"), FunctionTemplate::New(Add)->GetFunction());
+  exports->Set(String::NewFromUtf8("remove"), FunctionTemplate::New(Remove)->GetFunction());
+  exports->Set(String::NewFromUtf8("lookup"), FunctionTemplate::New(Lookup)->GetFunction());
+  exports->Set(String::NewFromUtf8("list"), FunctionTemplate::New(List)->GetFunction());
 }
 
 NODE_MODULE(rs_serve_auth, init);

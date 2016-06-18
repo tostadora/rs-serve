@@ -13,7 +13,12 @@
 #ifndef RS_AUTH_H
 #define RS_AUTH_H
 
+#define RS_TOKEN_SIZE 64
+
 int authorize_request(evhtp_request_t *req);
+
+void handle_authenticate(evhtp_request_t *req, void *arg);
+void handle_authorizations(evhtp_request_t *req, void *arg);
 
 #endif /* !RS_AUTH_H */
 

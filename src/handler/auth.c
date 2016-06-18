@@ -12,6 +12,9 @@
 
 #include "rs-serve.h"
 
+#include <jansson.h>
+#include <security/pam_appl.h>
+
 #define IS_READ(r) (r->method == htp_method_GET || r->method == htp_method_HEAD)
 
 static int match_scope(struct rs_scope *scope, evhtp_request_t *req) {
@@ -66,3 +69,174 @@ int authorize_request(evhtp_request_t *req) {
   }
   return -1;
 }
+
+int null_conv(int n, const struct pam_message **msg, struct pam_response **resp, void *data) {
+
+  *resp = (struct pam_response *) malloc(sizeof(struct pam_response));
+  (*resp)->resp = (char *) data;
+  (*resp)->resp_retcode = 0;
+  return PAM_SUCCESS;
+}
+
+void add_cors(evhtp_request_t *req) {
+  ADD_RESP_HEADER_CP(req, "Access-Control-Allow-Origin", "*");
+  ADD_RESP_HEADER_CP(req, "Access-Control-Allow-Methods", "GET, PUT, DELETE");
+  ADD_RESP_HEADER_CP(req, "Access-Control-Allow-Headers", "Content-Type, Origin");
+}
+
+void generate_token (unsigned char *buff) {
+	*((int *)buff) = rand();
+	*((int *)buff+sizeof(int)) = rand();
+}
+
+evhtp_res authenticate_handle_post(evhtp_request_t *req) {
+  // Someone is trying to authenticate.
+  // First, we need to extract the id data
+
+  evbuf_t *requestBuffer = req->buffer_in;
+  size_t requestBufferLenght = evbuffer_get_length(requestBuffer);
+
+  char *body = (char *) malloc(sizeof(char) * requestBufferLenght);
+
+  if(!body) {
+    return EVHTP_RES_SERVERR;
+  }
+
+  memset(body, 0, requestBufferLenght);
+  evbuffer_copyout(requestBuffer, body, requestBufferLenght);
+
+  json_t *username, *password;
+  json_error_t error;
+  json_t *root = json_loadb(body, requestBufferLenght, 0, &error);
+  free(body);
+
+  if (!root) {
+    return EVHTP_RES_BADREQ;
+  }
+  if (!json_is_object(root)) {
+    json_decref(root);
+    return EVHTP_RES_BADREQ;
+  }
+
+  username = json_object_get(root, "username");
+  password = json_object_get(root, "password");
+
+  if (!json_is_string(username) || !json_is_string(password)) {
+    json_decref(root);
+    return EVHTP_RES_BADREQ;
+  }
+
+  // Second, we go and check PAM for the user
+  struct pam_conv conversation = { null_conv, (void *) json_string_value(password) };
+  pam_handle_t *pamh = NULL;
+
+  if (pam_start("remotestorage", json_string_value(username), &conversation, &pamh) != PAM_SUCCESS) {
+	json_decref(root);
+    return EVHTP_RES_SERVERR;
+  }
+
+  int retval = pam_authenticate(pamh, 0);
+  pam_end(pamh, retval);
+
+  switch (retval) {
+	  case PAM_SUCCESS:
+	    break;
+	  case PAM_ABORT:
+	  // TODO: reply with json { success: false } in case of error
+	    json_decref(root);
+	    return EVHTP_RES_SERVERR;
+	    break;
+	  case PAM_AUTH_ERR:
+	  case PAM_CRED_INSUFFICIENT:
+	  case PAM_AUTHINFO_UNAVAIL:
+	  case PAM_MAXTRIES:
+	  case PAM_USER_UNKNOWN:
+	  default:
+	    json_decref(root);
+	    return EVHTP_RES_UNAUTH;
+	    break;
+  }
+
+  // PAM auth was successful. Reply.
+  // First, generate a random token
+  unsigned char token[RS_TOKEN_SIZE];
+  memset(token, 0, RS_TOKEN_SIZE);
+
+  generate_token(token);
+
+  // Save it for future references
+  if (!sm_put(auth_sessions, json_string_value(username), token)) {
+    json_decref(root);
+    return EVHTP_RES_SERVERR;
+  }
+
+  // And send it back
+  struct json *json = new_json(json_buf_writer, req->buffer_out);
+
+  json_start_object(json);
+  json_write_key_val(json, "success", "true");
+  json_write_key_val(json, "token", token);
+  json_end_object(json);
+
+
+  ADD_RESP_HEADER_CP(req, "Content-Type", "application/json; charset=UTF-8");
+
+  // Free resources and leave
+  json_decref(root);
+  free_json(json);
+  return EVHTP_RES_ACCEPTED;
+}
+
+evhtp_res authenticate_handle_delete(evhtp_request_t *req) {
+  // Someone is trying to logout
+  evhtp_header_t *token = evhtp_kvs_find_kv(req->uri->query, "session_token");
+
+  if (!sm_exists(auth_sessions, token->val)){
+	  return EVHTP_RES_NOTFOUND;
+  }
+}
+
+evhtp_res authorizations_handle_post(evhtp_request_t *req) {
+
+}
+
+evhtp_res authorizations_handle_get(evhtp_request_t *req) {
+
+}
+
+void handle_authenticate(evhtp_request_t *req, void *arg) {
+	add_cors(req);
+
+	switch(req->method) {
+      case htp_method_POST:
+        req->status = authenticate_handle_post(req);
+        break;
+      case htp_method_DELETE:
+        req->status = authenticate_handle_delete(req);
+        break;
+      case htp_method_HEAD:
+      case htp_method_PUT:
+      case htp_method_GET:
+      case htp_method_OPTIONS:
+      default:
+        req->status = EVHTP_RES_METHNALLOWED;
+	}
+}
+
+void handle_authorizations(evhtp_request_t *req, void *arg) {
+	switch(req->method) {
+      case htp_method_POST:
+        req->status = authorizations_handle_post(req);
+        break;
+      case htp_method_GET:
+        req->status = authorizations_handle_get(req);
+        break;
+      case htp_method_HEAD:
+      case htp_method_PUT:
+      case htp_method_DELETE:
+      case htp_method_OPTIONS:
+      default:
+        req->status = EVHTP_RES_METHNALLOWED;
+	}
+}
+

@@ -1,12 +1,12 @@
 CFLAGS=${shell pkg-config libevent_openssl --cflags} -ggdb -Wall --std=c99 $(INCLUDES)
-LDFLAGS=${shell pkg-config libevent_openssl --libs} ${shell pkg-config libssl --libs} -lmagic -lattr -lpthread -ldb -lcrypto
+LDFLAGS=${shell pkg-config libevent_openssl --libs} ${shell pkg-config libssl --libs} -lmagic -lattr -lpthread -ldb -lcrypto -lpam -ljansson
 INCLUDES=-Isrc -Ilib/evhtp/ -Ilib/evhtp/htparse -Ilib/evhtp/evthr -Ilib/evhtp/oniguruma/
 
 TOOLS = tools/add-token tools/remove-token tools/list-tokens tools/lookup-token
 TOOLS_LDFLAGS = -ldb
 
 BASE_OBJECTS=src/config.o
-COMMON_OBJECTS=src/common/log.o src/common/user.o src/common/auth.o src/common/json.o src/common/attributes.o
+COMMON_OBJECTS=src/common/log.o src/common/user.o src/common/auth.o src/common/json.o src/common/attributes.o src/lib/strmap.o
 HANDLER_OBJECTS=src/handler/storage.o src/handler/auth.o src/handler/webfinger.o src/handler/dispatch.o
 PROCESS_OBJECTS=src/process/main.o
 OBJECTS=$(BASE_OBJECTS) $(COMMON_OBJECTS) $(PROCESS_OBJECTS) $(HANDLER_OBJECTS)
@@ -20,7 +20,7 @@ TESTS=test/unit/common/auth
 
 default: all
 
-all: rs-serve tools tests
+all: rs-serve tools #tests
 
 rs-serve: $(STATIC_LIBS) $(OBJECTS) $(HEADERS)
 	@echo "[LD] $@"

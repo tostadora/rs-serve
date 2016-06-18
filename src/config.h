@@ -33,7 +33,9 @@
 // address & port to bind to
 #define RS_ADDRESS "0.0.0.0"
 extern int rs_port;
+extern int rs_auth_port;
 #define RS_PORT rs_port
+#define RS_AUTH_PORT rs_auth_port
 
 // (exception: rs_event_base is defined in main.c)
 extern struct event_base *rs_event_base;
